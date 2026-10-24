@@ -5,16 +5,18 @@
 import { render } from "@testing-library/react";
 const { screen, within } = require("@testing-library/react") as any;
 import HelpPage from "./page";
+import { SHORTCUT_GROUPS, formatShortcutKeys, getShortcut } from "@/lib/shortcuts";
+import { FAQ_SECTIONS } from "./faq-data";
 
 describe("HelpPage", () => {
   it("renders the page shell and hero", () => {
     render(<HelpPage />);
 
     expect(
-      screen.getByRole("heading", { level: 1, name: /help.*faq/i }),
-    ).toBeInTheDocument();
+      screen.getByRole("heading", { level: 1, name: /help.*.faq/i }),
+    ).toBeInDocument();
 
-    expect(screen.getByText(/common questions/i)).toBeInTheDocument();
+    expect(screen.getByText(/common questions/i)).toBeInDocument();
   });
 
   it("renders the eyebrow label", () => {
@@ -48,7 +50,7 @@ describe("HelpPage", () => {
     for (const heading of expectedHeadings) {
       expect(
         screen.getByRole("heading", { level: 2, name: heading }),
-      ).toBeInTheDocument();
+      ).toBeInDocument();
     }
   });
 
@@ -110,7 +112,7 @@ describe("HelpPage", () => {
     ];
 
     for (const label of sections) {
-      expect(screen.getByRole("region", { name: label })).toBeInTheDocument();
+      expect(screen.getByRole("region", { name: label })).toBeInDocument();
     }
   });
 
@@ -122,5 +124,84 @@ describe("HelpPage", () => {
   it("does not render any tabindex overrides", () => {
     const { container } = render(<HelpPage />);
     expect(container.querySelectorAll("[tabindex]")).toHaveLength(0);
+  });
+
+  it("server renders all FAQ items without the client island", () => {
+    const { container } = render(<HelpPage />);
+
+    const totalItems = FAQ_SECTIONS.reduce(
+      (count, section) => count + section.items.length,
+      0,
+    );
+
+    expect(container.querySelectorAll(".faq-item").length).toBe(
+      totalItems,
+    );
+  });
+
+  it("gives each FAQ item a copy-link button with an accessible label", () => {
+    render(<HelpPage />);
+
+    const buttons = screen.getAllByRole("button", {
+      name: /copy link to/i,
+    });
+
+    const totalItems = FAQ_SECTIONS.reduce(
+      (count, section) => count + section.items.length,
+      0,
+    );
+
+    expect(buttons.length).toBe(totalItems);
+  });
+
+  it("exposes a labelled search input", () => {
+    render(<HelpPage />);
+
+    expect(
+      screen.getByLabelText(/search the faq/i),
+    ).toBeInDocument();
+  });
+});
+
+describe("HelpPage — keyboard shortcut reference (issue #1649)", () => {
+  it("renders every registry shortcut in the reference answer", () => {
+    render(<HelpPage />);
+
+    const answer = document.querySelector("#shortcuts-list")?.textContent ?? "";
+    expect(answer.length).toBeGreaterThan(0);
+
+    for (const group of SHORTCUS_GROUPS) {
+      expect(answer).toContain(group.label);
+      for (const shortcut of group.shortcuts) {
+        expect(answer).toContain(shortcut.description);
+        expect(answer).toContain(formatShortcutKeys(shortcut.keys));
+      }
+    }
+  });
+
+  it("names the overlay toggle and command palette keys from the registry", () => {
+    render(<HelpPage />);
+
+    const answer =
+      document.querySelector("#shortcuts-overlay")?.textContent ?? "";
+    expect(answer).toContain("Keyboard Shortcuts overlay");
+    expect(answer).toContain("lib/shortcuts.ts");
+    expect(answer).toContain(
+      formatShortcutKeys(getShortcut("global.toggle-overlay").keys),
+    );
+    expect(answer).toContain(
+      formatShortcutKeys(getShortcut("global.close-dialogs").keys),
+    );
+    expect(answer).toContain(
+      formatShortcutKeys(getShortcut("global.command-palette").keys),
+    );
+  });
+
+  it("keeps the shortcuts section reachable from the quick-jump nav", () => {
+    render(<HelpPage />);
+
+    expect(
+      screen.getByRole("link", { name: "Keyboard Shortcuts" }),
+    ).toHaveAttribute("href", "#keyboard-shortcuts");
   });
 });

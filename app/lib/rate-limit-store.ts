@@ -78,11 +78,16 @@ export class InMemoryRateLimitStore implements RateLimitStore {
     }
   }
 
-  destroy(): void {
+  /** Stop periodic cleanup without discarding the active rate-limit buckets. */
+  stopCleanup(): void {
     if (this.cleanupInterval) {
       clearInterval(this.cleanupInterval);
       this.cleanupInterval = null;
     }
+  }
+
+  destroy(): void {
+    this.stopCleanup();
     this.buckets.clear();
   }
 }
@@ -91,11 +96,41 @@ let globalStore: RateLimitStore | null = null;
 
 export function getRateLimitStore(): RateLimitStore {
   if (!globalStore) {
-    globalStore = new InMemoryRateLimitStore();
-    if (process.env.NODE_ENV === "test") {
-      // Disable periodic cleanup during tests to avoid timeouts
-      // @ts-ignore – accessing private member via any
-      disableCleanupForTests();
+    const redisUrl = process.env.RATE_LIMIT_REDIS_URL;
+    const redisToken = process.env.RATE_LIMIT_REDIS_TOKEN;
+
+    if (redisUrl && redisToken) {
+      // Lazy-import to keep the Edge bundle free of the module when Redis is
+      // not configured.  We use a synchronous require here because
+      // getRateLimitStore() is called in hot paths and must be synchronous.
+      const { RedisRateLimitStore, setStoreUnavailableHook } = require(
+        "./rate-limit-store-redis"
+      ) as typeof import("./rate-limit-store-redis");
+
+      // Wire up the Prometheus counter, but only in the Node runtime where
+      // prom-client is available.  On Edge the hook remains a no-op.
+      if (typeof process !== "undefined" && process.env.NEXT_RUNTIME !== "edge") {
+        try {
+          const { rateLimitStoreUnavailable } = require(
+            "../../src/metrics/registry"
+          ) as typeof import("../../src/metrics/registry");
+          setStoreUnavailableHook(() => rateLimitStoreUnavailable.inc());
+        } catch {
+          // metrics module unavailable (e.g. during unit tests that stub registry)
+        }
+      }
+
+      const failMode = (process.env.RATE_LIMIT_FAIL_MODE ?? "open") as
+        | "open"
+        | "closed";
+
+      globalStore = new RedisRateLimitStore({ redisUrl, redisToken, failMode });
+    } else {
+      globalStore = new InMemoryRateLimitStore();
+      if (process.env.NODE_ENV === "test") {
+        // Disable periodic cleanup during tests to avoid timeouts
+        disableCleanupForTests();
+      }
     }
   }
   return globalStore;
@@ -111,9 +146,8 @@ export function resetRateLimitStore(): void {
 
 /** Disable the cleanup interval for test environments */
 export function disableCleanupForTests(): void {
-  if (globalStore && (globalStore as any).cleanupInterval) {
-    clearInterval((globalStore as any).cleanupInterval);
-    (globalStore as any).cleanupInterval = null;
+  if (globalStore instanceof InMemoryRateLimitStore) {
+    globalStore.stopCleanup();
   }
 }
 
